@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -21,14 +22,20 @@ var (
 	ErrForbidden    = errors.New("forbidden")
 )
 
+type Publisher interface {
+	Publish(ctx context.Context, eventType string, payload any) error
+}
+
 type Service struct {
 	repo repository.PostRepository
+	pub  Publisher
 	now  func() time.Time
 }
 
-func New(repo repository.PostRepository) *Service {
+func New(repo repository.PostRepository, pub Publisher) *Service {
 	return &Service{
 		repo: repo,
+		pub:  pub,
 		now:  time.Now,
 	}
 }
@@ -61,7 +68,16 @@ func (s *Service) Create(ctx context.Context, authorID string, in model.CreatePo
 	if err := s.repo.Create(ctx, post); err != nil {
 		return nil, err
 	}
-	return s.repo.GetByID(ctx, post.ID)
+	created, err := s.repo.GetByID(ctx, post.ID)
+	if err != nil {
+		return nil, err
+	}
+	s.notify("post_created", model.PostCreatedEvent{
+		UserID: created.AuthorID,
+		PostID: created.ID,
+		Title:  created.Title,
+	})
+	return created, nil
 }
 
 func (s *Service) GetByID(ctx context.Context, id string) (*model.Post, error) {
@@ -137,7 +153,31 @@ func (s *Service) Like(ctx context.Context, postID, userID string) (*model.Post,
 	if _, err := s.repo.AddLike(ctx, postID, userID); err != nil {
 		return nil, s.mapRepoErr(err)
 	}
-	return s.repo.GetByID(ctx, postID)
+	post, err := s.repo.GetByID(ctx, postID)
+	if err != nil {
+		return nil, s.mapRepoErr(err)
+	}
+	s.notify("post_liked", model.PostLikedEvent{
+		UserID:  post.AuthorID,
+		PostID:  post.ID,
+		LikerID: userID,
+	})
+	return post, nil
+}
+
+// notify publishes an event without blocking the request; failures are
+// logged through the default logger.
+func (s *Service) notify(eventType string, payload any) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if err := s.pub.Publish(ctx, eventType, payload); err != nil {
+			slog.Error("failed to publish event",
+				slog.String("event", eventType),
+				slog.Any("error", err),
+			)
+		}
+	}()
 }
 
 func (s *Service) mapRepoErr(err error) error {

@@ -7,14 +7,16 @@ import (
 )
 
 type Config struct {
-	Port     string
-	LogLevel string
+	Port            string
+	LogLevel        string
+	NotificationURL string
 }
 
 func Load() *Config {
 	return &Config{
-		Port:     getEnv("POST_PORT", "8083"),
-		LogLevel: getEnv("LOG_LEVEL", "info"),
+		Port:            getEnv("POST_PORT", "8083"),
+		LogLevel:        getEnv("LOG_LEVEL", "info"),
+		NotificationURL: getEnv("NOTIFICATION_SERVICE_URL", "http://notification:8084"),
 	}
 }
 

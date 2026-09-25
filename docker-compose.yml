@@ -4,12 +4,14 @@ services:
       context: ./gateway
     container_name: microservice-gateway
     ports:
-      - "8080:8080"
+      - "${GATEWAY_PORT:-8080}:8080"
     environment:
-      AUTH_SERVICE_URL: http://auth:8081
-      USER_SERVICE_URL: http://user:8082
-      POST_SERVICE_URL: http://post:8083
-      NOTIFICATION_SERVICE_URL: http://notification:8084
+      AUTH_SERVICE_URL: "${AUTH_SERVICE_URL:-http://auth:8081}"
+      USER_SERVICE_URL: "${USER_SERVICE_URL:-http://user:8082}"
+      POST_SERVICE_URL: "${POST_SERVICE_URL:-http://post:8083}"
+      NOTIFICATION_SERVICE_URL: "${NOTIFICATION_SERVICE_URL:-http://notification:8084}"
+      GATEWAY_TIMEOUT: "${GATEWAY_TIMEOUT:-10s}"
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
     depends_on:
       - auth
       - user
@@ -21,28 +23,40 @@ services:
       context: ./services/auth
     container_name: microservice-auth
     ports:
-      - "8081:8081"
+      - "${AUTH_PORT:-8081}:8081"
+    environment:
+      AUTH_SECRET: "${AUTH_SECRET:-dev-secret-change-me}"
+      ACCESS_TOKEN_TTL: "${ACCESS_TOKEN_TTL:-15m}"
+      REFRESH_TOKEN_TTL: "${REFRESH_TOKEN_TTL:-24h}"
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
 
   user:
     build:
       context: ./services/user
     container_name: microservice-user
     ports:
-      - "8082:8082"
+      - "${USER_PORT:-8082}:8082"
+    environment:
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
 
   post:
     build:
       context: ./services/post
     container_name: microservice-post
     ports:
-      - "8083:8083"
+      - "${POST_PORT:-8083}:8083"
+    environment:
+      NOTIFICATION_SERVICE_URL: "${NOTIFICATION_SERVICE_URL:-http://notification:8084}"
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
 
   notification:
     build:
       context: ./services/notification
     container_name: microservice-notification
     ports:
-      - "8084:8084"
+      - "${NOTIFICATION_PORT:-8084}:8084"
+    environment:
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
 
 networks:
   default:

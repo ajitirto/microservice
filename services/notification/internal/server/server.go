@@ -1,4 +1,5 @@
-// Package server wires the post service HTTP server and middleware chain.
+// Package server wires the notification service HTTP server and
+// middleware chain.
 package server
 
 import (
@@ -6,15 +7,15 @@ import (
 	"net/http"
 	"time"
 
-	"post/internal/config"
-	"post/internal/handler"
-	"post/internal/middleware"
-	"post/internal/repository"
-	"post/internal/service"
+	"notification/internal/config"
+	"notification/internal/handler"
+	"notification/internal/middleware"
+	"notification/internal/repository"
+	"notification/internal/service"
 )
 
-func New(cfg *config.Config, logger *slog.Logger, repo repository.PostRepository, pub service.Publisher) (*http.Server, error) {
-	svc := service.New(repo, pub)
+func New(cfg *config.Config, logger *slog.Logger, repo repository.NotificationRepository) (*http.Server, error) {
+	svc := service.New(repo)
 	h := handler.New(svc, logger)
 
 	mux := http.NewServeMux()

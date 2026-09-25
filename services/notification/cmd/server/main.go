@@ -10,10 +10,9 @@ import (
 	"syscall"
 	"time"
 
-	"post/internal/config"
-	"post/internal/publisher"
-	"post/internal/repository"
-	"post/internal/server"
+	"notification/internal/config"
+	"notification/internal/repository"
+	"notification/internal/server"
 )
 
 func main() {
@@ -22,9 +21,8 @@ func main() {
 	slog.SetDefault(logger)
 
 	repo := repository.NewInMemory()
-	pub := publisher.NewHTTP(cfg.NotificationURL)
 
-	srv, err := server.New(cfg, logger, repo, pub)
+	srv, err := server.New(cfg, logger, repo)
 	if err != nil {
 		logger.Error("invalid server configuration", "error", err)
 		os.Exit(1)
@@ -35,7 +33,7 @@ func main() {
 
 	errCh := make(chan error, 1)
 	go func() {
-		logger.Info("post service listening", "addr", srv.Addr)
+		logger.Info("notification service listening", "addr", srv.Addr)
 		errCh <- srv.ListenAndServe()
 	}()
 
