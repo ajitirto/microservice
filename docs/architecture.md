@@ -3,6 +3,12 @@
 
 Dokumen ini menjelaskan arsitektur Microservice POC, komunikasi antar-service, ownership data, dan alur request.
 
+Dokumentasi teknikal lain:
+- [Database (PostgreSQL)](database.md)
+- [Kubernetes (kind)](kubernetes.md)
+- [CI — GitHub Actions](ci-cd.md)
+- [Laporan load testing](load-test.md)
+
 ## 1. High-Level Architecture
 
 ```text
@@ -1005,3 +1011,240 @@ Setelah POC selesai, kemampuan yang ingin diperoleh:
 ```
 
 Fokus utama bukan jumlah service, tetapi memahami **bagaimana request bergerak melalui distributed system dan bagaimana sistem bereaksi ketika salah satu komponennya mengalami bottleneck atau failure**.
+
+---
+
+# 22. Learning Roadmap
+
+Project dikerjakan bertahap. Urutan pembelajaran:
+
+```text
+Monolith
+   │
+   ▼
+Microservices
+   │
+   ▼
+API Gateway
+   │
+   ▼
+REST
+   │
+   ▼
+gRPC
+   │
+   ▼
+Redis
+   │
+   ▼
+Queue / Event
+   │
+   ▼
+Observability
+   │
+   ▼
+Horizontal Scaling
+   │
+   ▼
+Kubernetes
+```
+
+Status pengerjaan per fase:
+
+## Phase 1 — Basic Microservices
+
+* [x] API Gateway
+* [x] Auth Service
+* [x] User Service
+* [x] Post Service
+* [x] Docker Compose
+* [x] Internal Docker network
+
+## Phase 2 — Communication
+
+* [x] REST API
+* [x] gRPC
+* [x] Protobuf
+* [x] Service-to-service communication
+* [x] Timeout
+* [x] Retry
+
+## Phase 3 — Performance
+
+* [x] Redis
+* [x] Caching
+* [x] Connection pooling
+* [x] Database indexing
+* [x] Rate limiting
+* [x] Load testing
+
+## Phase 4 — Async Architecture
+
+* [x] Message broker
+* [x] Event
+* [x] Queue
+* [x] Consumer
+* [x] Retry
+* [x] Dead letter queue
+
+## Phase 5 — Reliability
+
+* [x] Health check
+* [x] Circuit breaker
+* [x] Graceful shutdown
+* [x] Idempotency
+* [x] Distributed tracing
+* [x] Metrics
+* [x] Structured logging
+
+## Phase 6 — Scaling
+
+* [x] Horizontal scaling
+* [x] Load balancing
+* [x] Multiple gateway instances
+* [x] Multiple service instances
+* [x] Database bottleneck
+* [x] Cache bottleneck
+* [x] Queue bottleneck
+
+Hasil dan analisis: [load-test.md](load-test.md).
+
+## Phase 7 — Production Infrastructure
+
+* [x] Kubernetes (kind lokal)
+* [x] Service discovery (Kubernetes DNS)
+* [x] Ingress (ingress-nginx)
+* [x] Observability stack (Prometheus)
+* [x] CI/CD (GitHub Actions — CI + job summary)
+* [ ] Container registry (khusus lokal via `kind load`, tidak push registry)
+* [ ] Cloud deployment (khusus lokal, tidak deploy ke cloud)
+
+Detail: [kubernetes.md](kubernetes.md), [ci-cd.md](ci-cd.md).
+
+---
+
+# 23. Menjalankan Project
+
+## Prasyarat
+
+- Docker + Docker Compose
+- Go 1.26.x (untuk pengembangan service)
+- kind + kubectl (untuk fase Kubernetes)
+
+## Mode Docker Compose
+
+```bash
+cp .env.example .env
+docker compose up --build        # foreground
+docker compose up -d --build     # background
+docker compose ps
+docker compose logs -f gateway
+docker compose down
+docker compose down -v           # hapus volume (data database hilang)
+```
+
+## Mode Kubernetes (kind)
+
+```bash
+./deploy/scripts/k8s-up.sh       # build + kind load + apply + smoke test
+./deploy/scripts/k8s-down.sh     # hapus namespace poc
+```
+
+## Environment (Docker Compose)
+
+Variabel utama di `.env.example`:
+
+```env
+GATEWAY_PORT=8080
+AUTH_SERVICE_URL=http://auth:8081
+USER_SERVICE_URL=http://user:8082
+POST_SERVICE_URL=http://post:8083
+NOTIFICATION_SERVICE_URL=http://notification:8084
+AUTH_GRPC_ADDR=auth:9091
+USER_GRPC_ADDR=user:9090
+REDIS_URL=redis://redis:6379
+RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
+DATABASE_URL=postgres://postgres:postgres@postgres:5432/<db>
+GATEWAY_RATE_LIMIT=60
+```
+
+---
+
+# 24. Health Check & Contoh Request
+
+## Health Check
+
+Setiap service (dan gateway) menyediakan `GET /health`:
+
+```bash
+curl http://localhost:8080/health
+```
+
+Response:
+
+```json
+{"status": "ok"}
+```
+
+## Contoh Request
+
+```http
+GET http://localhost:8080/api/users/123
+Authorization: Bearer <token>
+```
+
+```bash
+# login → token
+curl -X POST http://localhost:8080/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"aji@example.com","password":"password123"}'
+
+# create post (idempotency key)
+curl -X POST http://localhost:8080/api/posts \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: key-123' \
+  -d '{"title":"Postingan pertama","content":"..."}'
+
+# list posts
+curl http://localhost:8080/api/posts -H "Authorization: Bearer $TOKEN"
+
+# like post
+curl -X POST http://localhost:8080/api/posts/p1/like \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+---
+
+# 25. Design Principles
+
+1. **Gateway bukan business logic** — routing, auth, rate limit, timeout, observability.
+2. **Service memiliki domain** — auth (identitas), user (profil), post (konten), notification (pemberitahuan).
+3. **Database ownership** — service tidak melakukan query langsung ke database service lain (lihat §8).
+4. **REST untuk external API** — interface konsumsi client.
+5. **gRPC untuk internal communication** — komunikasi antar-service dengan contract kuat.
+6. **Event untuk asynchronous processing** — proses non-kritis dipindah ke queue.
+
+---
+
+# 26. Repository Structure
+
+```text
+.
+├── gateway/                 # API Gateway (Go)
+├── services/
+│   ├── auth/
+│   ├── user/
+│   ├── post/
+│   └── notification/
+├── proto/                   # protobuf contract
+├── deploy/
+│   ├── docker/              # compose-adjacent (haproxy, postgres, prometheus)
+│   ├── k8s/                 # manifest Kubernetes (kustomize)
+│   └── scripts/             # loadtest.sh, k8s-up.sh, k8s-down.sh
+├── docs/                    # dokumentasi (repo ini)
+├── .github/workflows/       # CI (ci.yml)
+├── docker-compose.yml
+├── .env.example
+└── README.md                # gambaran bisnis + link ke dokumentasi
+```
