@@ -119,7 +119,9 @@ func New(cfg Config) (*Resolver, error) {
 		cfg.CacheTTL = defaultCacheTTL
 	}
 
-	conn, err := grpc.NewClient(cfg.Address, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(cfg.Address,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithDefaultServiceConfig(`{"loadBalancingPolicy":"round_robin"}`))
 	if err != nil {
 		return nil, err
 	}

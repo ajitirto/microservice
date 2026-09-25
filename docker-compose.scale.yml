@@ -1,0 +1,34 @@
+services:
+  haproxy:
+    volumes:
+      - ./deploy/docker/haproxy/haproxy.scale.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+
+  user:
+    ports: !reset []
+
+  post:
+    ports: !reset []
+
+  notification:
+    ports: !reset []
+
+  gateway2:
+    build:
+      context: ./gateway
+    expose:
+      - "8080"
+    environment:
+      AUTH_SERVICE_URL: "${AUTH_SERVICE_URL:-http://auth:8081}"
+      USER_SERVICE_URL: "${USER_SERVICE_URL:-http://user:8082}"
+      POST_SERVICE_URL: "${POST_SERVICE_URL:-http://post:8083}"
+      NOTIFICATION_SERVICE_URL: "${NOTIFICATION_SERVICE_URL:-http://notification:8084}"
+      AUTH_GRPC_ADDR: "${AUTH_GRPC_ADDR:-auth:9091}"
+      REDIS_URL: "${REDIS_URL:-redis://redis:6379}"
+      GATEWAY_RATE_LIMIT: "${GATEWAY_RATE_LIMIT:-60}"
+      GATEWAY_TIMEOUT: "${GATEWAY_TIMEOUT:-10s}"
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+    depends_on:
+      - auth
+      - user
+      - post
+      - notification

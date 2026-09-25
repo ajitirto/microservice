@@ -30,9 +30,8 @@ services:
   gateway:
     build:
       context: ./gateway
-    container_name: microservice-gateway
-    ports:
-      - "${GATEWAY_PORT:-8080}:8080"
+    expose:
+      - "8080"
     environment:
       AUTH_SERVICE_URL: "${AUTH_SERVICE_URL:-http://auth:8081}"
       USER_SERVICE_URL: "${USER_SERVICE_URL:-http://user:8082}"
@@ -48,6 +47,17 @@ services:
       - user
       - post
       - notification
+
+  haproxy:
+    image: haproxy:2.9-alpine
+    container_name: microservice-haproxy
+    ports:
+      - "${GATEWAY_PORT:-8080}:8080"
+      - "${HAPROXY_STATS_PORT:-8404}:8404"
+    volumes:
+      - ./deploy/docker/haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    depends_on:
+      - gateway
 
   rabbitmq:
     image: rabbitmq:3-management-alpine
@@ -81,7 +91,6 @@ services:
   user:
     build:
       context: ./services/user
-    container_name: microservice-user
     ports:
       - "${USER_PORT:-8082}:8082"
       - "${USER_GRPC_PORT:-9090}:9090"
@@ -95,7 +104,6 @@ services:
   post:
     build:
       context: ./services/post
-    container_name: microservice-post
     ports:
       - "${POST_PORT:-8083}:8083"
     environment:
@@ -112,7 +120,6 @@ services:
   notification:
     build:
       context: ./services/notification
-    container_name: microservice-notification
     ports:
       - "${NOTIFICATION_PORT:-8084}:8084"
     environment:
