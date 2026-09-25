@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"gateway/internal/middleware"
+	"gateway/internal/trace"
 )
 
 type Proxy struct {
@@ -87,6 +88,9 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			if _, ok := req.Header["User-Agent"]; !ok {
 				req.Header.Set("User-Agent", "")
+			}
+			if s := trace.SpanFrom(req.Context()); s != nil {
+				req.Header.Set("traceparent", s.Traceparent())
 			}
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {

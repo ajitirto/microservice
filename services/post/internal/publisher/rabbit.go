@@ -10,6 +10,8 @@ import (
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
+
+	"post/internal/trace"
 )
 
 const eventExchange = "post.events"
@@ -46,6 +48,11 @@ func (p *RabbitPublisher) Publish(ctx context.Context, eventType string, payload
 		return err
 	}
 
+	headers := amqp.Table{}
+	if s := trace.SpanFrom(ctx); s != nil {
+		headers["traceparent"] = s.Traceparent()
+	}
+
 	conf, err := p.ch.PublishWithDeferredConfirmWithContext(
 		ctx,
 		eventExchange,
@@ -56,6 +63,7 @@ func (p *RabbitPublisher) Publish(ctx context.Context, eventType string, payload
 			ContentType:  "application/json",
 			DeliveryMode: amqp.Persistent,
 			Timestamp:    time.Now().UTC(),
+			Headers:      headers,
 			Body:         body,
 		},
 	)

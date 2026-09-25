@@ -10,10 +10,16 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"post/internal/model"
 	"post/internal/repository"
+)
+
+const (
+	idemWindow     = 10 * time.Minute
+	idemMaxEntries = 1000
 )
 
 var (
@@ -38,18 +44,66 @@ type Service struct {
 	pub   Publisher
 	users UserResolver
 	now   func() time.Time
+
+	mu      sync.Mutex
+	created map[string]idemEntry
+}
+
+type idemEntry struct {
+	postID    string
+	expiresAt time.Time
 }
 
 func New(repo repository.PostRepository, pub Publisher, users UserResolver) *Service {
 	return &Service{
-		repo:  repo,
-		pub:   pub,
-		users: users,
-		now:   time.Now,
+		repo:    repo,
+		pub:     pub,
+		users:   users,
+		now:     time.Now,
+		created: make(map[string]idemEntry),
 	}
 }
 
 func (s *Service) Create(ctx context.Context, authorID string, in model.CreatePostInput) (*model.Post, error) {
+	post, _, err := s.CreateIdempotent(ctx, authorID, in, "")
+	return post, err
+}
+
+// CreateIdempotent creates a post unless the given Idempotency-Key was
+// already used within idemWindow, in which case it returns the post
+// created by the first call with created=false so the caller can answer
+// with 200 instead of 201. Concurrent requests with the same key can
+// still both create (no single-flight), which this POC accepts.
+func (s *Service) CreateIdempotent(ctx context.Context, authorID string, in model.CreatePostInput, key string) (*model.Post, bool, error) {
+	if key == "" {
+		post, err := s.create(ctx, authorID, in)
+		return post, true, err
+	}
+
+	s.mu.Lock()
+	s.reapIdempotent()
+	entry, replay := s.created[key]
+	s.mu.Unlock()
+	if replay {
+		post, err := s.repo.GetByID(ctx, entry.postID)
+		if err == nil {
+			s.enrich(ctx, post)
+			return post, false, nil
+		}
+	}
+
+	post, err := s.create(ctx, authorID, in)
+	if err == nil {
+		s.mu.Lock()
+		if len(s.created) < idemMaxEntries {
+			s.created[key] = idemEntry{postID: post.ID, expiresAt: s.now().Add(idemWindow)}
+		}
+		s.mu.Unlock()
+	}
+	return post, true, err
+}
+
+func (s *Service) create(ctx context.Context, authorID string, in model.CreatePostInput) (*model.Post, error) {
 	if authorID == "" {
 		return nil, fmt.Errorf("%w: author required", ErrInvalidInput)
 	}
@@ -87,7 +141,7 @@ func (s *Service) Create(ctx context.Context, authorID string, in model.CreatePo
 	if err != nil {
 		return nil, err
 	}
-	s.notify("post_created", model.PostCreatedEvent{
+	s.notify(ctx, "post_created", model.PostCreatedEvent{
 		UserID: created.AuthorID,
 		PostID: created.ID,
 		Title:  created.Title,
@@ -185,7 +239,7 @@ func (s *Service) Like(ctx context.Context, postID, userID string) (*model.Post,
 	if err != nil {
 		return nil, s.mapRepoErr(err)
 	}
-	s.notify("post_liked", model.PostLikedEvent{
+	s.notify(ctx, "post_liked", model.PostLikedEvent{
 		UserID:  post.AuthorID,
 		PostID:  post.ID,
 		LikerID: userID,
@@ -195,10 +249,12 @@ func (s *Service) Like(ctx context.Context, postID, userID string) (*model.Post,
 }
 
 // notify publishes an event without blocking the request; failures are
-// logged through the default logger.
-func (s *Service) notify(eventType string, payload any) {
+// logged through the default logger. The request's trace context is
+// preserved so the event can be correlated with its source request.
+func (s *Service) notify(ctx context.Context, eventType string, payload any) {
+	spanCtx := context.WithoutCancel(ctx)
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		ctx, cancel := context.WithTimeout(spanCtx, 3*time.Second)
 		defer cancel()
 		if err := s.pub.Publish(ctx, eventType, payload); err != nil {
 			slog.Error("failed to publish event",
@@ -222,6 +278,16 @@ func (s *Service) mapRepoErr(err error) error {
 		return ErrPostNotFound
 	}
 	return err
+}
+
+// reapIdempotent drops expired entries; callers must hold s.mu.
+func (s *Service) reapIdempotent() {
+	now := s.now()
+	for key, entry := range s.created {
+		if now.After(entry.expiresAt) {
+			delete(s.created, key)
+		}
+	}
 }
 
 func newID() (string, error) {

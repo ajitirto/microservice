@@ -90,6 +90,14 @@ services:
       RABBITMQ_URL: "${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672/}"
       LOG_LEVEL: "${LOG_LEVEL:-info}"
 
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: microservice-prometheus
+    ports:
+      - "${PROMETHEUS_PORT:-9095}:9090"
+    volumes:
+      - ./deploy/docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+
 networks:
   default:
     name: microservice-network

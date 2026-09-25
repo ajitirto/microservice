@@ -47,12 +47,17 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	post, err := h.svc.Create(r.Context(), userID, in)
+	post, created, err := h.svc.CreateIdempotent(r.Context(), userID, in, r.Header.Get("Idempotency-Key"))
 	if err != nil {
 		h.writeError(w, r, err)
 		return
 	}
-	middleware.WriteJSON(w, http.StatusCreated, post)
+	status := http.StatusCreated
+	if !created {
+		status = http.StatusOK
+		w.Header().Set("Idempotency-Replayed", "true")
+	}
+	middleware.WriteJSON(w, status, post)
 }
 
 func (h *Handler) getByID(w http.ResponseWriter, r *http.Request) {

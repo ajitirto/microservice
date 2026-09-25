@@ -7,6 +7,7 @@ import (
 
 	"gateway/internal/config"
 	"gateway/internal/handler"
+	"gateway/internal/metrics"
 	"gateway/internal/middleware"
 	"gateway/internal/proxy"
 	"gateway/internal/ratelimit"
@@ -28,6 +29,7 @@ func New(cfg *config.Config, logger *slog.Logger, verifier middleware.TokenVerif
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/health", handler.Health)
+	mux.Handle("/metrics", metrics.Handler())
 	mux.Handle("/api", p)
 	mux.Handle("/api/", p)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -37,14 +39,16 @@ func New(cfg *config.Config, logger *slog.Logger, verifier middleware.TokenVerif
 		})
 	})
 
-	// Middleware chain: recovery -> requestID -> logging -> timeout -> rateLimit -> auth -> router
+	// Middleware chain: metrics -> recovery -> requestID -> trace -> logging -> timeout -> rateLimit -> auth -> router
 	var h http.Handler = mux
 	h = middleware.Auth(verifier)(h)
 	h = middleware.RateLimit(limiter, logger)(h)
 	h = middleware.Timeout(cfg.Timeout)(h)
 	h = middleware.Logging(logger)(h)
+	h = middleware.Trace(h)
 	h = middleware.RequestID(h)
 	h = middleware.Recovery(logger)(h)
+	h = metrics.Middleware(h)
 
 	return h, nil
 }

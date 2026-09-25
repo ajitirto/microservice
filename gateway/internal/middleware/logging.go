@@ -4,6 +4,8 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"gateway/internal/trace"
 )
 
 type responseWriter struct {
@@ -45,13 +47,20 @@ func Logging(logger *slog.Logger) func(http.Handler) http.Handler {
 			duration := time.Since(start)
 			requestID := r.Header.Get(RequestIDHeader)
 
-			logger.Info("request completed",
+			args := []any{
 				slog.String("method", r.Method),
 				slog.String("path", r.URL.Path),
 				slog.Int("status", rw.status),
 				slog.Int64("duration_ms", duration.Milliseconds()),
 				slog.String("request_id", requestID),
-			)
+			}
+			if span := trace.SpanFrom(r.Context()); span != nil {
+				args = append(args,
+					slog.String("trace_id", span.TraceID),
+					slog.String("span_id", span.SpanID),
+				)
+			}
+			logger.Info("request completed", args...)
 		})
 	}
 }

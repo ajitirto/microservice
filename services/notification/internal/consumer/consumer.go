@@ -14,6 +14,7 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 
 	"notification/internal/service"
+	"notification/internal/trace"
 )
 
 const (
@@ -153,9 +154,18 @@ func (c *Consumer) consume(ctx context.Context) error {
 }
 
 func (c *Consumer) handle(ctx context.Context, d amqp.Delivery) {
+	parent, _ := trace.ParseTraceparent(headerString(d.Headers, "traceparent"))
+	ctx = trace.WithSpan(ctx, trace.New(parent))
+	span := trace.SpanFrom(ctx)
+
 	if err := c.handleOne(ctx, d); err != nil {
 		c.logger.Warn("event processing failed",
-			"routing_key", d.RoutingKey, "error", err)
+			"routing_key", d.RoutingKey, "error", err,
+			"trace_id", span.TraceID, "span_id", span.SpanID)
+	} else {
+		c.logger.Info("event processed",
+			"routing_key", d.RoutingKey,
+			"trace_id", span.TraceID, "span_id", span.SpanID)
 	}
 
 	select {
@@ -164,6 +174,15 @@ func (c *Consumer) handle(ctx context.Context, d amqp.Delivery) {
 	default:
 		_ = d.Ack(false)
 	}
+}
+
+func headerString(headers amqp.Table, key string) string {
+	v, ok := headers[key]
+	if !ok {
+		return ""
+	}
+	s, _ := v.(string)
+	return s
 }
 
 func (c *Consumer) handleOne(ctx context.Context, d amqp.Delivery) error {

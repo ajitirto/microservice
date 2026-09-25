@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"github.com/sony/gobreaker"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -26,6 +27,12 @@ const (
 	defaultCacheTTL = 60 * time.Second
 	cacheOpTimeout  = 250 * time.Millisecond
 	cacheCooldown   = 2 * time.Second
+
+	// breakerMaxFailures opens the circuit after this many consecutive
+	// failures; breakerCooldown is how long it stays open before a
+	// half-open probe is allowed through.
+	breakerMaxFailures = 5
+	breakerCooldown    = 10 * time.Second
 )
 
 var (
@@ -91,6 +98,7 @@ type Resolver struct {
 	cacheTTL    time.Duration
 	logger      *slog.Logger
 
+	breaker           *gobreaker.CircuitBreaker
 	disableCacheUntil atomic.Int64
 }
 
@@ -124,6 +132,18 @@ func New(cfg Config) (*Resolver, error) {
 		cache:       cfg.Cache,
 		cacheTTL:    cfg.CacheTTL,
 		logger:      cfg.Logger,
+		breaker: gobreaker.NewCircuitBreaker(gobreaker.Settings{
+			Name:        "user-resolver",
+			MaxRequests: 1,
+			Timeout:     breakerCooldown,
+			ReadyToTrip: func(counts gobreaker.Counts) bool {
+				return counts.ConsecutiveFailures >= breakerMaxFailures
+			},
+			OnStateChange: func(name string, from, to gobreaker.State) {
+				cfg.Logger.Warn("user resolver circuit state change",
+					"from", from.String(), "to", to.String())
+			},
+		}),
 	}, nil
 }
 
@@ -150,7 +170,35 @@ func (r *Resolver) GetUser(ctx context.Context, userID string) (*model.UserInfo,
 	return info, nil
 }
 
+// fetch routes through the circuit breaker so a failing user service
+// stops being hammered once the circuit opens; open-circuit calls fail
+// fast with ErrUserUnavailable. Only transport-level failures trip the
+// breaker; a NotFound response is a valid business outcome.
 func (r *Resolver) fetch(ctx context.Context, userID string) (*model.UserInfo, error) {
+	v, err := r.breaker.Execute(func() (any, error) {
+		info, err := r.fetchWithRetries(ctx, userID)
+		if err != nil && !errors.Is(err, ErrUserNotFound) {
+			return userLookupResult{}, err
+		}
+		return userLookupResult{info: info, err: err}, nil
+	})
+	if err != nil {
+		if errors.Is(err, gobreaker.ErrOpenState) {
+			r.logger.Warn("user resolver circuit open; failing fast", "user_id", userID)
+			return nil, ErrUserUnavailable
+		}
+		return nil, err
+	}
+	res := v.(userLookupResult)
+	return res.info, res.err
+}
+
+type userLookupResult struct {
+	info *model.UserInfo
+	err  error
+}
+
+func (r *Resolver) fetchWithRetries(ctx context.Context, userID string) (*model.UserInfo, error) {
 	var lastErr error
 	for attempt := 1; attempt <= r.maxAttempts; attempt++ {
 		if attempt > 1 {

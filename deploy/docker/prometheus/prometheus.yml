@@ -1,0 +1,19 @@
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: "gateway"
+    static_configs:
+      - targets: ["gateway:8080"]
+  - job_name: "auth"
+    static_configs:
+      - targets: ["auth:8081"]
+  - job_name: "user"
+    static_configs:
+      - targets: ["user:8082"]
+  - job_name: "post"
+    static_configs:
+      - targets: ["post:8083"]
+  - job_name: "notification"
+    static_configs:
+      - targets: ["notification:8084"]

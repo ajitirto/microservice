@@ -10,12 +10,21 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/sony/gobreaker"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 
 	"gateway/internal/authpb"
+)
+
+const (
+	// breakerMaxFailures opens the circuit after this many consecutive
+	// failures; breakerCooldown is how long it stays open before a
+	// half-open probe is allowed through.
+	breakerMaxFailures = 5
+	breakerCooldown    = 10 * time.Second
 )
 
 var (
@@ -38,6 +47,8 @@ type Resolver struct {
 	maxAttempts int
 	baseBackoff time.Duration
 	logger      *slog.Logger
+
+	breaker *gobreaker.CircuitBreaker
 }
 
 func New(cfg Config) (*Resolver, error) {
@@ -65,6 +76,18 @@ func New(cfg Config) (*Resolver, error) {
 		maxAttempts: cfg.MaxAttempts,
 		baseBackoff: cfg.BaseBackoff,
 		logger:      cfg.Logger,
+		breaker: gobreaker.NewCircuitBreaker(gobreaker.Settings{
+			Name:        "auth-verifier",
+			MaxRequests: 1,
+			Timeout:     breakerCooldown,
+			ReadyToTrip: func(counts gobreaker.Counts) bool {
+				return counts.ConsecutiveFailures >= breakerMaxFailures
+			},
+			OnStateChange: func(name string, from, to gobreaker.State) {
+				cfg.Logger.Warn("auth resolver circuit state change",
+					"from", from.String(), "to", to.String())
+			},
+		}),
 	}, nil
 }
 
@@ -72,7 +95,35 @@ func (r *Resolver) Close() error {
 	return r.conn.Close()
 }
 
+// Verify routes through the circuit breaker so a failing auth service
+// stops being hammered once the circuit opens; open-circuit calls fail
+// fast with ErrAuthUnavailable. Only transport-level failures trip the
+// breaker; an invalid-token verdict is a valid business outcome.
 func (r *Resolver) Verify(ctx context.Context, token string) (string, error) {
+	v, err := r.breaker.Execute(func() (any, error) {
+		userID, err := r.verifyWithRetries(ctx, token)
+		if err != nil && !errors.Is(err, ErrInvalidToken) {
+			return verifyResult{}, err
+		}
+		return verifyResult{userID: userID, err: err}, nil
+	})
+	if err != nil {
+		if errors.Is(err, gobreaker.ErrOpenState) {
+			r.logger.Warn("auth resolver circuit open; failing fast")
+			return "", ErrAuthUnavailable
+		}
+		return "", err
+	}
+	res := v.(verifyResult)
+	return res.userID, res.err
+}
+
+type verifyResult struct {
+	userID string
+	err    error
+}
+
+func (r *Resolver) verifyWithRetries(ctx context.Context, token string) (string, error) {
 	var lastErr error
 	for attempt := 1; attempt <= r.maxAttempts; attempt++ {
 		if attempt > 1 {

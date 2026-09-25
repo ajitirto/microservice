@@ -101,6 +101,63 @@ func waitFor(t *testing.T, cond func() bool) {
 
 func strPtr(s string) *string { return &s }
 
+func TestCreateIdempotentReplayReturnsSamePost(t *testing.T) {
+	svc, _ := newService()
+	in := model.CreatePostInput{Title: "idem", Content: "same key"}
+
+	first, created, err := svc.CreateIdempotent(context.Background(), "123", in, "key-1")
+	if err != nil || !created {
+		t.Fatalf("first create: created=%v err=%v", created, err)
+	}
+
+	replay, created, err := svc.CreateIdempotent(context.Background(), "123", in, "key-1")
+	if err != nil || created {
+		t.Fatalf("replay: created=%v err=%v", created, err)
+	}
+	if replay.ID != first.ID {
+		t.Fatalf("replay returned a different post: got %s want %s", replay.ID, first.ID)
+	}
+	if replay.AuthorName != "Aji" {
+		t.Fatalf("replay post not enriched: got %q", replay.AuthorName)
+	}
+	posts, _ := svc.List(context.Background())
+	if len(posts) != 3 {
+		t.Fatalf("expected 1 post (plus 2 seeds), got %d", len(posts))
+	}
+}
+
+func TestCreateIdempotentDifferentKeysCreateSeparatePosts(t *testing.T) {
+	svc, _ := newService()
+	in := model.CreatePostInput{Title: "idem", Content: "two keys"}
+
+	p1, created, err := svc.CreateIdempotent(context.Background(), "123", in, "key-a")
+	if err != nil || !created {
+		t.Fatalf("create a: created=%v err=%v", created, err)
+	}
+	p2, created, err := svc.CreateIdempotent(context.Background(), "123", in, "key-b")
+	if err != nil || !created {
+		t.Fatalf("create b: created=%v err=%v", created, err)
+	}
+	if p1.ID == p2.ID {
+		t.Fatalf("expected distinct posts, got %s twice", p1.ID)
+	}
+}
+
+func TestCreateWithoutIdempotencyKeyAlwaysCreates(t *testing.T) {
+	svc, _ := newService()
+	in := model.CreatePostInput{Title: "idem", Content: "no key"}
+
+	for i := 0; i < 3; i++ {
+		if _, created, err := svc.CreateIdempotent(context.Background(), "123", in, ""); err != nil || !created {
+			t.Fatalf("create %d: created=%v err=%v", i, created, err)
+		}
+	}
+	posts, _ := svc.List(context.Background())
+	if len(posts) != 5 {
+		t.Fatalf("expected 3 posts (plus 2 seeds), got %d", len(posts))
+	}
+}
+
 func TestCreateValidPost(t *testing.T) {
 	svc, _ := newService()
 

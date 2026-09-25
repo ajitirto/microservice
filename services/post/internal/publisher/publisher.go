@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"post/internal/trace"
 )
 
 type HTTPPublisher struct {
@@ -35,6 +37,9 @@ func (p *HTTPPublisher) Publish(ctx context.Context, eventType string, payload a
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if s := trace.SpanFrom(ctx); s != nil {
+		req.Header.Set("traceparent", s.Traceparent())
+	}
 
 	resp, err := p.client.Do(req)
 	if err != nil {

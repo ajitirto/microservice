@@ -8,6 +8,7 @@ import (
 
 	"auth/internal/config"
 	"auth/internal/handler"
+	"auth/internal/metrics"
 	"auth/internal/middleware"
 	"auth/internal/repository"
 	"auth/internal/service"
@@ -19,9 +20,13 @@ func New(cfg *config.Config, logger *slog.Logger, repo *repository.InMemory) (*h
 
 	mux := http.NewServeMux()
 	h.SetRoutes(mux)
+	mux.Handle("/metrics", metrics.Handler())
 
+	// Middleware chain: recovery -> requestID -> trace -> logging -> metrics -> mux
 	var root http.Handler = mux
+	root = metrics.Middleware(root)
 	root = middleware.Logging(logger)(root)
+	root = middleware.Trace(root)
 	root = middleware.RequestID(root)
 	root = middleware.Recovery(logger)(root)
 
