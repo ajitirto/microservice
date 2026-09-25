@@ -13,6 +13,7 @@ type Config struct {
 	UserGRPCAddr    string
 	RedisURL        string
 	RabbitMQURL     string
+	DatabaseURL     string
 }
 
 func Load() *Config {
@@ -23,6 +24,7 @@ func Load() *Config {
 		UserGRPCAddr:    getEnv("USER_GRPC_ADDR", "user:9090"),
 		RedisURL:        getEnv("REDIS_URL", ""),
 		RabbitMQURL:     getEnv("RABBITMQ_URL", ""),
+		DatabaseURL:     getEnv("DATABASE_URL", ""),
 	}
 }
 

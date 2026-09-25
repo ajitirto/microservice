@@ -13,6 +13,7 @@ type Config struct {
 	Secret          string
 	AccessTokenTTL  time.Duration
 	RefreshTokenTTL time.Duration
+	DatabaseURL     string
 	LogLevel        string
 }
 
@@ -23,6 +24,7 @@ func Load() *Config {
 		Secret:          getEnv("AUTH_SECRET", "dev-secret-change-me"),
 		AccessTokenTTL:  getDuration("ACCESS_TOKEN_TTL", 15*time.Minute),
 		RefreshTokenTTL: getDuration("REFRESH_TOKEN_TTL", 24*time.Hour),
+		DatabaseURL:     getEnv("DATABASE_URL", ""),
 		LogLevel:        getEnv("LOG_LEVEL", "info"),
 	}
 }

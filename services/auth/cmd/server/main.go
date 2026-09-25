@@ -26,10 +26,25 @@ func main() {
 	logger := newLogger(cfg.LogLevel)
 	slog.SetDefault(logger)
 
-	repo := repository.NewInMemory()
-	svc := service.New(repo.Users, repo.Refresh, cfg.Secret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL)
+	var users repository.UserRepository
+	var refresh repository.RefreshTokenStore
+	if cfg.DatabaseURL != "" {
+		logger.Info("using PostgreSQL storage", "url", cfg.DatabaseURL)
+		db, err := repository.NewPostgres(context.Background(), cfg.DatabaseURL)
+		if err != nil {
+			logger.Error("failed to connect to postgres", "error", err)
+			os.Exit(1)
+		}
+		defer db.Close()
+		users, refresh = db.Users, db.Refresh
+	} else {
+		logger.Info("using in-memory storage")
+		im := repository.NewInMemory()
+		users, refresh = im.Users, im.Refresh
+	}
+	svc := service.New(users, refresh, cfg.Secret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL)
 
-	srv, err := server.New(cfg, logger, repo)
+	srv, err := server.New(cfg, logger, svc)
 	if err != nil {
 		logger.Error("invalid server configuration", "error", err)
 		os.Exit(1)

@@ -23,7 +23,20 @@ func main() {
 	logger := newLogger(cfg.LogLevel)
 	slog.SetDefault(logger)
 
-	repo := repository.NewInMemory()
+	var repo repository.PostRepository
+	if cfg.DatabaseURL != "" {
+		logger.Info("using PostgreSQL storage", "url", cfg.DatabaseURL)
+		db, err := repository.NewPostgres(context.Background(), cfg.DatabaseURL)
+		if err != nil {
+			logger.Error("failed to connect to postgres", "error", err)
+			os.Exit(1)
+		}
+		defer db.Close()
+		repo = db
+	} else {
+		logger.Info("using in-memory storage")
+		repo = repository.NewInMemory()
+	}
 	pub := buildPublisher(cfg, logger)
 
 	users, err := userresolver.New(userresolver.Config{

@@ -10,12 +10,10 @@ import (
 	"auth/internal/handler"
 	"auth/internal/metrics"
 	"auth/internal/middleware"
-	"auth/internal/repository"
 	"auth/internal/service"
 )
 
-func New(cfg *config.Config, logger *slog.Logger, repo *repository.InMemory) (*http.Server, error) {
-	svc := service.New(repo.Users, repo.Refresh, cfg.Secret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL)
+func New(cfg *config.Config, logger *slog.Logger, svc *service.Service) (*http.Server, error) {
 	h := handler.New(svc, logger)
 
 	mux := http.NewServeMux()

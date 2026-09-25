@@ -10,6 +10,7 @@ type Config struct {
 	Port        string
 	LogLevel    string
 	RabbitMQURL string
+	DatabaseURL string
 }
 
 func Load() *Config {
@@ -17,6 +18,7 @@ func Load() *Config {
 		Port:        getEnv("NOTIFICATION_PORT", "8084"),
 		LogLevel:    getEnv("LOG_LEVEL", "info"),
 		RabbitMQURL: getEnv("RABBITMQ_URL", ""),
+		DatabaseURL: getEnv("DATABASE_URL", ""),
 	}
 }
 
