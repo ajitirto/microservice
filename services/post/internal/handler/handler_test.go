@@ -10,13 +10,14 @@ import (
 	"testing"
 
 	"post/internal/handler"
+	"post/internal/publisher"
 	"post/internal/repository"
 	"post/internal/service"
 )
 
 func newTestMux() *http.ServeMux {
 	repo := repository.NewInMemory()
-	svc := service.New(repo)
+	svc := service.New(repo, publisher.NopPublisher{})
 	h := handler.New(svc, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	mux := http.NewServeMux()

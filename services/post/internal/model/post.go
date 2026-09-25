@@ -24,3 +24,15 @@ type UpdatePostInput struct {
 	Title   *string `json:"title,omitempty"`
 	Content *string `json:"content,omitempty"`
 }
+
+type PostCreatedEvent struct {
+	UserID string `json:"user_id"`
+	PostID string `json:"post_id"`
+	Title  string `json:"title"`
+}
+
+type PostLikedEvent struct {
+	UserID  string `json:"user_id"`
+	PostID  string `json:"post_id"`
+	LikerID string `json:"liker_id"`
+}

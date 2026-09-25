@@ -3,21 +3,84 @@ package service_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
+	"time"
 
 	"post/internal/model"
 	"post/internal/repository"
 	"post/internal/service"
 )
 
-func newService() *service.Service {
-	return service.New(repository.NewInMemory())
+type recordedEvent struct {
+	eventType string
+	payload   any
+}
+
+type recordingPublisher struct {
+	mu     sync.Mutex
+	events []recordedEvent
+}
+
+func (p *recordingPublisher) Publish(ctx context.Context, eventType string, payload any) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.events = append(p.events, recordedEvent{eventType: eventType, payload: payload})
+	return nil
+}
+
+func (p *recordingPublisher) count(eventType string) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	n := 0
+	for _, e := range p.events {
+		if e.eventType == eventType {
+			n++
+		}
+	}
+	return n
+}
+
+func (p *recordingPublisher) last(eventType string) (any, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for i := len(p.events) - 1; i >= 0; i-- {
+		if p.events[i].eventType == eventType {
+			return p.events[i].payload, true
+		}
+	}
+	return nil, false
+}
+
+type failingPublisher struct{}
+
+func (failingPublisher) Publish(ctx context.Context, eventType string, payload any) error {
+	return errors.New("notification service down")
+}
+
+func newService() (*service.Service, *recordingPublisher) {
+	pub := &recordingPublisher{}
+	return service.New(repository.NewInMemory(), pub), pub
+}
+
+// waitFor polls until cond is true or the deadline passes; publishing
+// is asynchronous by design (fire-and-forget).
+func waitFor(t *testing.T, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("condition not met within deadline")
 }
 
 func strPtr(s string) *string { return &s }
 
 func TestCreateValidPost(t *testing.T) {
-	svc := newService()
+	svc, _ := newService()
 
 	post, err := svc.Create(context.Background(), "123", model.CreatePostInput{Title: "Hello", Content: "World"})
 	if err != nil {
@@ -35,7 +98,7 @@ func TestCreateValidPost(t *testing.T) {
 }
 
 func TestCreateValidation(t *testing.T) {
-	svc := newService()
+	svc, _ := newService()
 	ctx := context.Background()
 
 	tests := []struct {
@@ -57,7 +120,7 @@ func TestCreateValidation(t *testing.T) {
 }
 
 func TestGetByIDAndList(t *testing.T) {
-	svc := newService()
+	svc, _ := newService()
 	ctx := context.Background()
 
 	post, err := svc.GetByID(ctx, "p1")
@@ -82,7 +145,7 @@ func TestGetByIDAndList(t *testing.T) {
 }
 
 func TestUpdateOwnership(t *testing.T) {
-	svc := newService()
+	svc, _ := newService()
 	ctx := context.Background()
 
 	t.Run("author can update", func(t *testing.T) {
@@ -121,7 +184,7 @@ func TestUpdateOwnership(t *testing.T) {
 }
 
 func TestDeleteOwnership(t *testing.T) {
-	svc := newService()
+	svc, _ := newService()
 	ctx := context.Background()
 
 	if err := svc.Delete(ctx, "p1", "999"); !errors.Is(err, service.ErrForbidden) {
@@ -136,7 +199,7 @@ func TestDeleteOwnership(t *testing.T) {
 }
 
 func TestLike(t *testing.T) {
-	svc := newService()
+	svc, _ := newService()
 	ctx := context.Background()
 
 	t.Run("like increments count", func(t *testing.T) {
@@ -170,4 +233,61 @@ func TestLike(t *testing.T) {
 			t.Errorf("err = %v, want ErrPostNotFound", err)
 		}
 	})
+}
+
+func TestCreatePublishesPostCreated(t *testing.T) {
+	svc, pub := newService()
+
+	post, err := svc.Create(context.Background(), "123", model.CreatePostInput{Title: "Hello", Content: "World"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	waitFor(t, func() bool { return pub.count("post_created") == 1 })
+
+	payload, ok := pub.last("post_created")
+	if !ok {
+		t.Fatal("post_created event not published")
+	}
+	event, ok := payload.(model.PostCreatedEvent)
+	if !ok {
+		t.Fatalf("payload type = %T, want PostCreatedEvent", payload)
+	}
+	if event.UserID != "123" || event.PostID != post.ID || event.Title != "Hello" {
+		t.Errorf("event = %+v, want user_id 123, post_id %s, title Hello", event, post.ID)
+	}
+}
+
+func TestLikePublishesPostLiked(t *testing.T) {
+	svc, pub := newService()
+
+	if _, err := svc.Like(context.Background(), "p1", "u1"); err != nil {
+		t.Fatalf("Like: %v", err)
+	}
+
+	waitFor(t, func() bool { return pub.count("post_liked") == 1 })
+
+	payload, ok := pub.last("post_liked")
+	if !ok {
+		t.Fatal("post_liked event not published")
+	}
+	event, ok := payload.(model.PostLikedEvent)
+	if !ok {
+		t.Fatalf("payload type = %T, want PostLikedEvent", payload)
+	}
+	if event.UserID != "123" || event.PostID != "p1" || event.LikerID != "u1" {
+		t.Errorf("event = %+v, want recipient 123, post p1, liker u1", event)
+	}
+}
+
+func TestCreateSucceedsWhenPublisherFails(t *testing.T) {
+	svc := service.New(repository.NewInMemory(), failingPublisher{})
+
+	post, err := svc.Create(context.Background(), "123", model.CreatePostInput{Title: "Hello", Content: "World"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if post.ID == "" {
+		t.Error("post should still be created despite publisher failure")
+	}
 }
