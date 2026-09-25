@@ -11,8 +11,39 @@ import (
 
 	"gateway/internal/authresolver"
 	"gateway/internal/config"
+	"gateway/internal/ratelimit"
 	"gateway/internal/server"
+
+	"github.com/redis/go-redis/v9"
 )
+
+func buildLimiter(cfg *config.Config, logger *slog.Logger) ratelimit.Limiter {
+	if cfg.RedisURL == "" {
+		logger.Warn("REDIS_URL not set; rate limiting disabled")
+		return ratelimit.NoopLimiter{}
+	}
+
+	opts, err := redis.ParseURL(cfg.RedisURL)
+	if err != nil {
+		logger.Warn("invalid REDIS_URL; rate limiting disabled", slog.Any("error", err))
+		return ratelimit.NoopLimiter{}
+	}
+	opts.DialTimeout = 500 * time.Millisecond
+	opts.ReadTimeout = 500 * time.Millisecond
+	opts.WriteTimeout = 500 * time.Millisecond
+	opts.PoolTimeout = 500 * time.Millisecond
+	opts.MaxRetries = -1
+	client := redis.NewClient(opts)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := client.Ping(ctx).Err(); err != nil {
+		logger.Warn("redis unreachable; rate limiting disabled", slog.Any("error", err))
+		_ = client.Close()
+		return ratelimit.NoopLimiter{}
+	}
+
+	return ratelimit.NewRedisLimiter(client, cfg.RateLimitPerMinute, time.Minute)
+}
 
 func main() {
 	cfg := config.Load()
@@ -45,7 +76,9 @@ func main() {
 	}
 	defer verifier.Close()
 
-	h, err := server.New(cfg, logger, verifier)
+	limiter := buildLimiter(cfg, logger)
+
+	h, err := server.New(cfg, logger, verifier, limiter)
 	if err != nil {
 		logger.Error("failed to create server", slog.Any("error", err))
 		os.Exit(1)

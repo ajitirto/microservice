@@ -1,14 +1,18 @@
 // Package userresolver implements the gRPC client the post service
 // uses to resolve user data from the user service. Calls are bounded by
 // a timeout and retried with exponential backoff on transient failures.
+// A cache can be attached to avoid repeated lookups of the same user.
 package userresolver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -18,10 +22,52 @@ import (
 	"post/internal/userpb"
 )
 
+const (
+	defaultCacheTTL = 60 * time.Second
+	cacheOpTimeout  = 250 * time.Millisecond
+	cacheCooldown   = 2 * time.Second
+)
+
 var (
 	ErrUserNotFound    = errors.New("user not found")
 	ErrUserUnavailable = errors.New("user service unavailable")
 )
+
+// Cache stores resolved users keyed by user id. Get returns the stored
+// value; redis.Nil signals a miss.
+type Cache interface {
+	Get(ctx context.Context, key string) (string, error)
+	Set(ctx context.Context, key, value string, ttl time.Duration) error
+}
+
+type RedisCache struct {
+	client *redis.Client
+}
+
+func NewRedisCache(redisURL string) (*RedisCache, error) {
+	opts, err := redis.ParseURL(redisURL)
+	if err != nil {
+		return nil, err
+	}
+	opts.DialTimeout = 500 * time.Millisecond
+	opts.ReadTimeout = 500 * time.Millisecond
+	opts.WriteTimeout = 500 * time.Millisecond
+	opts.PoolTimeout = 500 * time.Millisecond
+	opts.MaxRetries = -1
+	return &RedisCache{client: redis.NewClient(opts)}, nil
+}
+
+func (c *RedisCache) Close() error {
+	return c.client.Close()
+}
+
+func (c *RedisCache) Get(ctx context.Context, key string) (string, error) {
+	return c.client.Get(ctx, key).Result()
+}
+
+func (c *RedisCache) Set(ctx context.Context, key, value string, ttl time.Duration) error {
+	return c.client.Set(ctx, key, value, ttl).Err()
+}
 
 // Config pins the retry policy. MaxAttempts is the total number of
 // attempts (including the first), so 3 means up to 2 retries.
@@ -30,6 +76,8 @@ type Config struct {
 	Timeout     time.Duration
 	MaxAttempts int
 	BaseBackoff time.Duration
+	Cache       Cache
+	CacheTTL    time.Duration
 	Logger      *slog.Logger
 }
 
@@ -39,7 +87,11 @@ type Resolver struct {
 	timeout     time.Duration
 	maxAttempts int
 	baseBackoff time.Duration
+	cache       Cache
+	cacheTTL    time.Duration
 	logger      *slog.Logger
+
+	disableCacheUntil atomic.Int64
 }
 
 func New(cfg Config) (*Resolver, error) {
@@ -55,6 +107,9 @@ func New(cfg Config) (*Resolver, error) {
 	if cfg.BaseBackoff == 0 {
 		cfg.BaseBackoff = 50 * time.Millisecond
 	}
+	if cfg.CacheTTL == 0 {
+		cfg.CacheTTL = defaultCacheTTL
+	}
 
 	conn, err := grpc.NewClient(cfg.Address, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -66,6 +121,8 @@ func New(cfg Config) (*Resolver, error) {
 		timeout:     cfg.Timeout,
 		maxAttempts: cfg.MaxAttempts,
 		baseBackoff: cfg.BaseBackoff,
+		cache:       cfg.Cache,
+		cacheTTL:    cfg.CacheTTL,
 		logger:      cfg.Logger,
 	}, nil
 }
@@ -74,7 +131,26 @@ func (r *Resolver) Close() error {
 	return r.conn.Close()
 }
 
+// AttachCache wires a cache into the resolver; safe before first use.
+func (r *Resolver) AttachCache(cache Cache) {
+	r.cache = cache
+}
+
 func (r *Resolver) GetUser(ctx context.Context, userID string) (*model.UserInfo, error) {
+	if info, ok := r.fromCache(ctx, userID); ok {
+		return info, nil
+	}
+
+	info, err := r.fetch(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	r.store(ctx, userID, info)
+	return info, nil
+}
+
+func (r *Resolver) fetch(ctx context.Context, userID string) (*model.UserInfo, error) {
 	var lastErr error
 	for attempt := 1; attempt <= r.maxAttempts; attempt++ {
 		if attempt > 1 {
@@ -114,4 +190,94 @@ func (r *Resolver) GetUser(ctx context.Context, userID string) (*model.UserInfo,
 		}
 	}
 	return nil, ErrUserUnavailable
+}
+
+func (r *Resolver) fromCache(ctx context.Context, userID string) (*model.UserInfo, bool) {
+	if r.cache == nil {
+		return nil, false
+	}
+	now := time.Now()
+	if now.UnixNano() < r.disableCacheUntil.Load() {
+		return nil, false
+	}
+	cacheCtx, cancel := context.WithTimeout(ctx, cacheOpTimeout)
+	defer cancel()
+	raw, err := boundedGet(r.cache, cacheCtx, keyFor(userID))
+	if err != nil {
+		if !errors.Is(err, redis.Nil) {
+			r.disableCache(now)
+		}
+		return nil, false
+	}
+	var info model.UserInfo
+	if err := json.Unmarshal([]byte(raw), &info); err != nil {
+		return nil, false
+	}
+	return &info, true
+}
+
+func (r *Resolver) store(ctx context.Context, userID string, info *model.UserInfo) {
+	if r.cache == nil {
+		return
+	}
+	if time.Now().UnixNano() < r.disableCacheUntil.Load() {
+		return
+	}
+	raw, err := json.Marshal(info)
+	if err != nil {
+		return
+	}
+	cacheCtx, cancel := context.WithTimeout(ctx, cacheOpTimeout)
+	defer cancel()
+	if err := boundedSet(r.cache, cacheCtx, keyFor(userID), string(raw), r.cacheTTL); err != nil {
+		r.disableCache(time.Now())
+		r.logger.Warn("failed to cache user", "user_id", userID, "error", err)
+	}
+}
+
+// boundedGet and boundedSet cap cache operations with a select so a
+// hung DNS lookup can never stall the request past cacheOpTimeout.
+func boundedGet(c Cache, ctx context.Context, key string) (string, error) {
+	if c == nil {
+		return "", redis.Nil
+	}
+	ch := make(chan struct {
+		v   string
+		err error
+	}, 1)
+	go func() {
+		v, err := c.Get(ctx, key)
+		ch <- struct {
+			v   string
+			err error
+		}{v, err}
+	}()
+	select {
+	case r := <-ch:
+		return r.v, r.err
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+}
+
+func boundedSet(c Cache, ctx context.Context, key, value string, ttl time.Duration) error {
+	if c == nil {
+		return nil
+	}
+	ch := make(chan error, 1)
+	go func() { ch <- c.Set(ctx, key, value, ttl) }()
+	select {
+	case err := <-ch:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (r *Resolver) disableCache(now time.Time) {
+	r.disableCacheUntil.Store(now.Add(cacheCooldown).UnixNano())
+}
+
+func keyFor(userID string) string {
+	return "user:" + userID
 }

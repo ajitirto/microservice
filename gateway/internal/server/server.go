@@ -9,9 +9,10 @@ import (
 	"gateway/internal/handler"
 	"gateway/internal/middleware"
 	"gateway/internal/proxy"
+	"gateway/internal/ratelimit"
 )
 
-func New(cfg *config.Config, logger *slog.Logger, verifier middleware.TokenVerifier) (http.Handler, error) {
+func New(cfg *config.Config, logger *slog.Logger, verifier middleware.TokenVerifier, limiter ratelimit.Limiter) (http.Handler, error) {
 	p, err := proxy.New(
 		cfg.AuthServiceURL,
 		cfg.UserServiceURL,
@@ -36,9 +37,10 @@ func New(cfg *config.Config, logger *slog.Logger, verifier middleware.TokenVerif
 		})
 	})
 
-	// Middleware chain: recovery -> requestID -> logging -> timeout -> auth -> router
+	// Middleware chain: recovery -> requestID -> logging -> timeout -> rateLimit -> auth -> router
 	var h http.Handler = mux
 	h = middleware.Auth(verifier)(h)
+	h = middleware.RateLimit(limiter, logger)(h)
 	h = middleware.Timeout(cfg.Timeout)(h)
 	h = middleware.Logging(logger)(h)
 	h = middleware.RequestID(h)

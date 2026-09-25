@@ -11,6 +11,7 @@ type Config struct {
 	LogLevel        string
 	NotificationURL string
 	UserGRPCAddr    string
+	RedisURL        string
 }
 
 func Load() *Config {
@@ -19,6 +20,7 @@ func Load() *Config {
 		LogLevel:        getEnv("LOG_LEVEL", "info"),
 		NotificationURL: getEnv("NOTIFICATION_SERVICE_URL", "http://notification:8084"),
 		UserGRPCAddr:    getEnv("USER_GRPC_ADDR", "user:9090"),
+		RedisURL:        getEnv("REDIS_URL", ""),
 	}
 }
 

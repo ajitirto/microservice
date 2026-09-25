@@ -38,6 +38,15 @@ func main() {
 	}
 	defer users.Close()
 
+	if cfg.RedisURL != "" {
+		cache, err := userresolver.NewRedisCache(cfg.RedisURL)
+		if err != nil {
+			logger.Warn("invalid REDIS_URL, running without cache", "error", err)
+		} else {
+			users.AttachCache(cache)
+		}
+	}
+
 	srv, err := server.New(cfg, logger, repo, pub, users)
 	if err != nil {
 		logger.Error("invalid server configuration", "error", err)
