@@ -10,6 +10,7 @@ import (
 	"post/internal/model"
 	"post/internal/repository"
 	"post/internal/service"
+	"post/internal/userresolver"
 )
 
 type recordedEvent struct {
@@ -60,7 +61,28 @@ func (failingPublisher) Publish(ctx context.Context, eventType string, payload a
 
 func newService() (*service.Service, *recordingPublisher) {
 	pub := &recordingPublisher{}
-	return service.New(repository.NewInMemory(), pub), pub
+	return service.New(repository.NewInMemory(), pub, knownUsers()), pub
+}
+
+type stubUsers struct {
+	users map[string]*model.UserInfo
+	err   error
+}
+
+func (s stubUsers) GetUser(ctx context.Context, userID string) (*model.UserInfo, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	if u, ok := s.users[userID]; ok {
+		return u, nil
+	}
+	return nil, userresolver.ErrUserNotFound
+}
+
+func knownUsers() stubUsers {
+	return stubUsers{users: map[string]*model.UserInfo{
+		"123": {ID: "123", Name: "Aji", Email: "aji@example.com"},
+	}}
 }
 
 // waitFor polls until cond is true or the deadline passes; publishing
@@ -94,6 +116,62 @@ func TestCreateValidPost(t *testing.T) {
 	}
 	if post.CreatedAt.IsZero() || post.UpdatedAt.IsZero() {
 		t.Error("timestamps must be set")
+	}
+}
+
+func TestCreateResolvesAuthorName(t *testing.T) {
+	svc, _ := newService()
+
+	post, err := svc.Create(context.Background(), "123", model.CreatePostInput{Title: "Hello", Content: "World"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if post.AuthorName != "Aji" {
+		t.Errorf("author_name = %q, want Aji", post.AuthorName)
+	}
+}
+
+func TestCreateRejectsUnknownAuthor(t *testing.T) {
+	svc, _ := newService()
+
+	_, err := svc.Create(context.Background(), "999", model.CreatePostInput{Title: "Hello", Content: "World"})
+	if !errors.Is(err, userresolver.ErrUserNotFound) {
+		t.Errorf("err = %v, want ErrUserNotFound", err)
+	}
+}
+
+func TestCreateWhenUserServiceUnavailable(t *testing.T) {
+	svc := service.New(repository.NewInMemory(), failingPublisher{}, stubUsers{err: userresolver.ErrUserUnavailable})
+
+	_, err := svc.Create(context.Background(), "123", model.CreatePostInput{Title: "Hello", Content: "World"})
+	if !errors.Is(err, userresolver.ErrUserUnavailable) {
+		t.Errorf("err = %v, want ErrUserUnavailable", err)
+	}
+	if got, _ := svc.List(context.Background()); len(got) != 2 {
+		t.Errorf("post should not be created; list len = %d, want 2", len(got))
+	}
+}
+
+func TestGetByIDAndListEnrichAuthor(t *testing.T) {
+	svc, _ := newService()
+	ctx := context.Background()
+
+	post, err := svc.GetByID(ctx, "p1")
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if post.AuthorName != "Aji" {
+		t.Errorf("author_name = %q, want Aji", post.AuthorName)
+	}
+
+	posts, err := svc.List(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	for _, p := range posts {
+		if p.AuthorName != "Aji" {
+			t.Errorf("post %s author_name = %q, want Aji", p.ID, p.AuthorName)
+		}
 	}
 }
 
@@ -281,7 +359,7 @@ func TestLikePublishesPostLiked(t *testing.T) {
 }
 
 func TestCreateSucceedsWhenPublisherFails(t *testing.T) {
-	svc := service.New(repository.NewInMemory(), failingPublisher{})
+	svc := service.New(repository.NewInMemory(), failingPublisher{}, knownUsers())
 
 	post, err := svc.Create(context.Background(), "123", model.CreatePostInput{Title: "Hello", Content: "World"})
 	if err != nil {

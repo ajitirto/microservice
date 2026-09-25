@@ -26,17 +26,26 @@ type Publisher interface {
 	Publish(ctx context.Context, eventType string, payload any) error
 }
 
-type Service struct {
-	repo repository.PostRepository
-	pub  Publisher
-	now  func() time.Time
+// UserResolver resolves user data owned by the user service. It returns
+// userresolver.ErrUserNotFound for unknown users and
+// userresolver.ErrUserUnavailable when the user service cannot be reached.
+type UserResolver interface {
+	GetUser(ctx context.Context, userID string) (*model.UserInfo, error)
 }
 
-func New(repo repository.PostRepository, pub Publisher) *Service {
+type Service struct {
+	repo  repository.PostRepository
+	pub   Publisher
+	users UserResolver
+	now   func() time.Time
+}
+
+func New(repo repository.PostRepository, pub Publisher, users UserResolver) *Service {
 	return &Service{
-		repo: repo,
-		pub:  pub,
-		now:  time.Now,
+		repo:  repo,
+		pub:   pub,
+		users: users,
+		now:   time.Now,
 	}
 }
 
@@ -53,17 +62,23 @@ func (s *Service) Create(ctx context.Context, authorID string, in model.CreatePo
 		return nil, fmt.Errorf("%w: content must not be empty", ErrInvalidInput)
 	}
 
+	user, err := s.users.GetUser(ctx, authorID)
+	if err != nil {
+		return nil, err
+	}
+
 	id, err := newID()
 	if err != nil {
 		return nil, err
 	}
 	post := &model.Post{
-		ID:        id,
-		Title:     title,
-		Content:   content,
-		AuthorID:  authorID,
-		CreatedAt: s.now().UTC(),
-		UpdatedAt: s.now().UTC(),
+		ID:         id,
+		Title:      title,
+		Content:    content,
+		AuthorID:   authorID,
+		AuthorName: user.Name,
+		CreatedAt:  s.now().UTC(),
+		UpdatedAt:  s.now().UTC(),
 	}
 	if err := s.repo.Create(ctx, post); err != nil {
 		return nil, err
@@ -85,11 +100,19 @@ func (s *Service) GetByID(ctx context.Context, id string) (*model.Post, error) {
 	if err != nil {
 		return nil, s.mapRepoErr(err)
 	}
+	s.enrich(ctx, post)
 	return post, nil
 }
 
 func (s *Service) List(ctx context.Context) ([]*model.Post, error) {
-	return s.repo.List(ctx)
+	posts, err := s.repo.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, post := range posts {
+		s.enrich(ctx, post)
+	}
+	return posts, nil
 }
 
 func (s *Service) Update(ctx context.Context, id, authorID string, in model.UpdatePostInput) (*model.Post, error) {
@@ -132,7 +155,12 @@ func (s *Service) Update(ctx context.Context, id, authorID string, in model.Upda
 	if err := s.repo.Update(ctx, updated); err != nil {
 		return nil, s.mapRepoErr(err)
 	}
-	return s.repo.GetByID(ctx, id)
+	updated, err = s.repo.GetByID(ctx, id)
+	if err != nil {
+		return nil, s.mapRepoErr(err)
+	}
+	s.enrich(ctx, updated)
+	return updated, nil
 }
 
 func (s *Service) Delete(ctx context.Context, id, authorID string) error {
@@ -162,6 +190,7 @@ func (s *Service) Like(ctx context.Context, postID, userID string) (*model.Post,
 		PostID:  post.ID,
 		LikerID: userID,
 	})
+	s.enrich(ctx, post)
 	return post, nil
 }
 
@@ -178,6 +207,14 @@ func (s *Service) notify(eventType string, payload any) {
 			)
 		}
 	}()
+}
+
+func (s *Service) enrich(ctx context.Context, post *model.Post) {
+	user, err := s.users.GetUser(ctx, post.AuthorID)
+	if err != nil {
+		return
+	}
+	post.AuthorName = user.Name
 }
 
 func (s *Service) mapRepoErr(err error) error {

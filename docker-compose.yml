@@ -36,6 +36,7 @@ services:
     container_name: microservice-user
     ports:
       - "${USER_PORT:-8082}:8082"
+      - "${USER_GRPC_PORT:-9090}:9090"
     environment:
       LOG_LEVEL: "${LOG_LEVEL:-info}"
 
@@ -47,6 +48,7 @@ services:
       - "${POST_PORT:-8083}:8083"
     environment:
       NOTIFICATION_SERVICE_URL: "${NOTIFICATION_SERVICE_URL:-http://notification:8084}"
+      USER_GRPC_ADDR: "${USER_GRPC_ADDR:-user:9090}"
       LOG_LEVEL: "${LOG_LEVEL:-info}"
 
   notification:

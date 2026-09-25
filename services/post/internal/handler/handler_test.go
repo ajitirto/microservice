@@ -1,6 +1,7 @@
 package handler_test
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -10,14 +11,37 @@ import (
 	"testing"
 
 	"post/internal/handler"
+	"post/internal/model"
 	"post/internal/publisher"
 	"post/internal/repository"
 	"post/internal/service"
+	"post/internal/userresolver"
 )
+
+type stubUsers struct {
+	users map[string]*model.UserInfo
+	err   error
+}
+
+func (s stubUsers) GetUser(ctx context.Context, userID string) (*model.UserInfo, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	if u, ok := s.users[userID]; ok {
+		return u, nil
+	}
+	return nil, userresolver.ErrUserNotFound
+}
+
+func knownUsers() stubUsers {
+	return stubUsers{users: map[string]*model.UserInfo{
+		"123": {ID: "123", Name: "Aji", Email: "aji@example.com"},
+	}}
+}
 
 func newTestMux() *http.ServeMux {
 	repo := repository.NewInMemory()
-	svc := service.New(repo, publisher.NopPublisher{})
+	svc := service.New(repo, publisher.NopPublisher{}, knownUsers())
 	h := handler.New(svc, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	mux := http.NewServeMux()
@@ -95,6 +119,28 @@ func TestCreatePost(t *testing.T) {
 	})
 }
 
+func TestCreatePostUnknownAuthor(t *testing.T) {
+	mux := newTestMux()
+
+	rr := do(mux, http.MethodPost, "/posts", `{"title":"T","content":"C"}`, withUser("999"))
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (body %q)", rr.Code, rr.Body.String())
+	}
+}
+
+func TestCreatePostUserServiceDown(t *testing.T) {
+	repo := repository.NewInMemory()
+	svc := service.New(repo, publisher.NopPublisher{}, stubUsers{err: userresolver.ErrUserUnavailable})
+	h := handler.New(svc, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	mux := http.NewServeMux()
+	h.SetRoutes(mux)
+
+	rr := do(mux, http.MethodPost, "/posts", `{"title":"T","content":"C"}`, withUser("123"))
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 (body %q)", rr.Code, rr.Body.String())
+	}
+}
+
 func TestGetPost(t *testing.T) {
 	mux := newTestMux()
 
@@ -106,6 +152,9 @@ func TestGetPost(t *testing.T) {
 		body := decodeJSON(t, rr)
 		if body["author_id"] != "123" {
 			t.Errorf("author_id = %v, want 123", body["author_id"])
+		}
+		if body["author_name"] != "Aji" {
+			t.Errorf("author_name = %v, want Aji", body["author_name"])
 		}
 	})
 

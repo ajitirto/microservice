@@ -10,6 +10,7 @@ import (
 	"post/internal/middleware"
 	"post/internal/model"
 	"post/internal/service"
+	"post/internal/userresolver"
 )
 
 const userIDHeader = "X-User-ID"
@@ -135,6 +136,10 @@ func (h *Handler) writeError(w http.ResponseWriter, r *http.Request, err error) 
 		status = http.StatusBadRequest
 	case errors.Is(err, service.ErrForbidden):
 		status = http.StatusForbidden
+	case errors.Is(err, userresolver.ErrUserNotFound):
+		status = http.StatusBadRequest
+	case errors.Is(err, userresolver.ErrUserUnavailable):
+		status = http.StatusServiceUnavailable
 	}
 	middleware.WriteJSON(w, status, errorBody(r, err.Error()))
 }

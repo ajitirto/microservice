@@ -4,15 +4,20 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"google.golang.org/grpc"
+
 	"user/internal/config"
+	usergrpc "user/internal/grpc"
 	"user/internal/repository"
 	"user/internal/server"
+	"user/internal/userpb"
 )
 
 func main() {
@@ -28,13 +33,27 @@ func main() {
 		os.Exit(1)
 	}
 
+	grpcListener, err := net.Listen("tcp", ":"+cfg.GRPCPort)
+	if err != nil {
+		logger.Error("failed to listen for gRPC", "error", err, "port", cfg.GRPCPort)
+		os.Exit(1)
+	}
+	grpcServer := grpc.NewServer()
+	userpb.RegisterUserServiceServer(grpcServer, usergrpc.NewServer(repo, logger))
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	errCh := make(chan error, 1)
+	errCh := make(chan error, 2)
 	go func() {
 		logger.Info("user service listening", "addr", srv.Addr)
 		errCh <- srv.ListenAndServe()
+	}()
+	go func() {
+		logger.Info("user gRPC service listening", "addr", grpcListener.Addr().String())
+		if err := grpcServer.Serve(grpcListener); err != nil {
+			errCh <- err
+		}
 	}()
 
 	select {
@@ -45,6 +64,7 @@ func main() {
 		}
 	case <-ctx.Done():
 		logger.Info("shutdown signal received, draining connections")
+		grpcServer.GracefulStop()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := srv.Shutdown(shutdownCtx); err != nil {

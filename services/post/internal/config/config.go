@@ -10,6 +10,7 @@ type Config struct {
 	Port            string
 	LogLevel        string
 	NotificationURL string
+	UserGRPCAddr    string
 }
 
 func Load() *Config {
@@ -17,6 +18,7 @@ func Load() *Config {
 		Port:            getEnv("POST_PORT", "8083"),
 		LogLevel:        getEnv("LOG_LEVEL", "info"),
 		NotificationURL: getEnv("NOTIFICATION_SERVICE_URL", "http://notification:8084"),
+		UserGRPCAddr:    getEnv("USER_GRPC_ADDR", "user:9090"),
 	}
 }
 

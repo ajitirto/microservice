@@ -13,8 +13,8 @@ import (
 	"post/internal/service"
 )
 
-func New(cfg *config.Config, logger *slog.Logger, repo repository.PostRepository, pub service.Publisher) (*http.Server, error) {
-	svc := service.New(repo, pub)
+func New(cfg *config.Config, logger *slog.Logger, repo repository.PostRepository, pub service.Publisher, users service.UserResolver) (*http.Server, error) {
+	svc := service.New(repo, pub, users)
 	h := handler.New(svc, logger)
 
 	mux := http.NewServeMux()

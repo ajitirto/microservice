@@ -14,6 +14,7 @@ import (
 	"post/internal/publisher"
 	"post/internal/repository"
 	"post/internal/server"
+	"post/internal/userresolver"
 )
 
 func main() {
@@ -24,7 +25,20 @@ func main() {
 	repo := repository.NewInMemory()
 	pub := publisher.NewHTTP(cfg.NotificationURL)
 
-	srv, err := server.New(cfg, logger, repo, pub)
+	users, err := userresolver.New(userresolver.Config{
+		Address:     cfg.UserGRPCAddr,
+		Timeout:     time.Second,
+		MaxAttempts: 3,
+		BaseBackoff: 50 * time.Millisecond,
+		Logger:      logger,
+	})
+	if err != nil {
+		logger.Error("failed to init user resolver", "error", err)
+		os.Exit(1)
+	}
+	defer users.Close()
+
+	srv, err := server.New(cfg, logger, repo, pub, users)
 	if err != nil {
 		logger.Error("invalid server configuration", "error", err)
 		os.Exit(1)

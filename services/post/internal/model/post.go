@@ -4,13 +4,22 @@ package model
 import "time"
 
 type Post struct {
-	ID        string    `json:"id"`
-	Title     string    `json:"title"`
-	Content   string    `json:"content"`
-	AuthorID  string    `json:"author_id"`
-	Likes     int       `json:"likes"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID         string    `json:"id"`
+	Title      string    `json:"title"`
+	Content    string    `json:"content"`
+	AuthorID   string    `json:"author_id"`
+	AuthorName string    `json:"author_name,omitempty"`
+	Likes      int       `json:"likes"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+// UserInfo is the subset of user data the post service fetches over
+// gRPC to display author details without owning user data.
+type UserInfo struct {
+	ID    string
+	Name  string
+	Email string
 }
 
 type CreatePostInput struct {
