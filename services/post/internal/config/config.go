@@ -12,15 +12,17 @@ type Config struct {
 	NotificationURL string
 	UserGRPCAddr    string
 	RedisURL        string
+	RabbitMQURL     string
 }
 
 func Load() *Config {
 	return &Config{
 		Port:            getEnv("POST_PORT", "8083"),
 		LogLevel:        getEnv("LOG_LEVEL", "info"),
-		NotificationURL: getEnv("NOTIFICATION_SERVICE_URL", "http://notification:8084"),
+		NotificationURL: getEnv("NOTIFICATION_SERVICE_URL", ""),
 		UserGRPCAddr:    getEnv("USER_GRPC_ADDR", "user:9090"),
 		RedisURL:        getEnv("REDIS_URL", ""),
+		RabbitMQURL:     getEnv("RABBITMQ_URL", ""),
 	}
 }
 

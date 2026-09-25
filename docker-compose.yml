@@ -32,6 +32,18 @@ services:
       - post
       - notification
 
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: microservice-rabbitmq
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672"
+      - "${RABBITMQ_MGMT_PORT:-15672}:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+
   auth:
     build:
       context: ./services/auth
@@ -65,6 +77,7 @@ services:
       NOTIFICATION_SERVICE_URL: "${NOTIFICATION_SERVICE_URL:-http://notification:8084}"
       USER_GRPC_ADDR: "${USER_GRPC_ADDR:-user:9090}"
       REDIS_URL: "${REDIS_URL:-redis://redis:6379}"
+      RABBITMQ_URL: "${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672/}"
       LOG_LEVEL: "${LOG_LEVEL:-info}"
 
   notification:
@@ -74,6 +87,7 @@ services:
     ports:
       - "${NOTIFICATION_PORT:-8084}:8084"
     environment:
+      RABBITMQ_URL: "${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672/}"
       LOG_LEVEL: "${LOG_LEVEL:-info}"
 
 networks:

@@ -11,8 +11,10 @@ import (
 	"time"
 
 	"notification/internal/config"
+	"notification/internal/consumer"
 	"notification/internal/repository"
 	"notification/internal/server"
+	"notification/internal/service"
 )
 
 func main() {
@@ -21,6 +23,7 @@ func main() {
 	slog.SetDefault(logger)
 
 	repo := repository.NewInMemory()
+	svc := service.New(repo)
 
 	srv, err := server.New(cfg, logger, repo)
 	if err != nil {
@@ -36,6 +39,15 @@ func main() {
 		logger.Info("notification service listening", "addr", srv.Addr)
 		errCh <- srv.ListenAndServe()
 	}()
+
+	if cfg.RabbitMQURL != "" {
+		c := consumer.New(consumer.Config{URL: cfg.RabbitMQURL}, svc)
+		go func() {
+			if err := c.Start(ctx); err != nil {
+				logger.Error("event consumer failed", "error", err)
+			}
+		}()
+	}
 
 	select {
 	case err := <-errCh:

@@ -14,6 +14,7 @@ import (
 	"post/internal/publisher"
 	"post/internal/repository"
 	"post/internal/server"
+	"post/internal/service"
 	"post/internal/userresolver"
 )
 
@@ -23,7 +24,7 @@ func main() {
 	slog.SetDefault(logger)
 
 	repo := repository.NewInMemory()
-	pub := publisher.NewHTTP(cfg.NotificationURL)
+	pub := buildPublisher(cfg, logger)
 
 	users, err := userresolver.New(userresolver.Config{
 		Address:     cfg.UserGRPCAddr,
@@ -78,6 +79,18 @@ func main() {
 		}
 		logger.Info("server stopped")
 	}
+}
+
+func buildPublisher(cfg *config.Config, logger *slog.Logger) service.Publisher {
+	if cfg.RabbitMQURL != "" {
+		logger.Info("publishing events via RabbitMQ", "url", cfg.RabbitMQURL)
+		return publisher.NewRabbit(cfg.RabbitMQURL, logger)
+	}
+	if cfg.NotificationURL != "" {
+		logger.Info("publishing events via HTTP", "url", cfg.NotificationURL)
+		return publisher.NewHTTP(cfg.NotificationURL)
+	}
+	return publisher.NopPublisher{}
 }
 
 func newLogger(level string) *slog.Logger {

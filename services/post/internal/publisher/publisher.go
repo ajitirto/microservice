@@ -1,6 +1,6 @@
 // Package publisher sends post domain events to the notification
-// service over HTTP. It is a broker stand-in until the message broker
-// phase of the roadmap lands.
+// service. The RabbitMQ broker is the primary transport; the HTTP
+// publisher remains as a fallback for broker-less environments.
 package publisher
 
 import (
