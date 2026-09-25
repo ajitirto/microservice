@@ -1,0 +1,21 @@
+# Non-sensitive shared configuration. Credentials live in secret.yaml.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: poc
+data:
+  # Service discovery via Kubernetes DNS (ClusterIP service names).
+  AUTH_SERVICE_URL: "http://auth:8081"
+  USER_SERVICE_URL: "http://user:8082"
+  POST_SERVICE_URL: "http://post:8083"
+  NOTIFICATION_SERVICE_URL: "http://notification:8084"
+  AUTH_GRPC_ADDR: "auth:9091"
+  USER_GRPC_ADDR: "user:9090"
+  REDIS_URL: "redis://redis:6379"
+  RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672/"
+  GATEWAY_RATE_LIMIT: "1000"
+  GATEWAY_TIMEOUT: "10s"
+  ACCESS_TOKEN_TTL: "15m"
+  REFRESH_TOKEN_TTL: "24h"
+  LOG_LEVEL: "info"

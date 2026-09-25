@@ -785,13 +785,13 @@ Eksperimen dapat dilakukan untuk mengamati:
 
 ## Phase 7 — Production Infrastructure
 
-* [ ] Kubernetes
-* [ ] Service discovery
-* [ ] Ingress
-* [ ] Observability stack
-* [ ] CI/CD
-* [ ] Container registry
-* [ ] Cloud deployment
+* [x] Kubernetes (kind lokal)
+* [x] Service discovery (Kubernetes DNS)
+* [x] Ingress (ingress-nginx)
+* [x] Observability stack (Prometheus)
+* [x] CI/CD (GitHub Actions — Continuous Integration + job summary)
+* [ ] Container registry (khusus lokal via `kind load`, tidak push registry)
+* [ ] Cloud deployment (khusus lokal, tidak deploy ke cloud)
 
 ---
 
