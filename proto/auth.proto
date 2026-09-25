@@ -1,0 +1,21 @@
+// auth.proto defines the auth service internal API contract used by the
+// gateway to verify access tokens over gRPC. The gateway never holds the
+// signing secret; it delegates verification to the auth service.
+syntax = "proto3";
+
+package auth.v1;
+
+option go_package = "authpb";
+
+service AuthService {
+  rpc VerifyToken(VerifyTokenRequest) returns (VerifyTokenResponse);
+}
+
+message VerifyTokenRequest {
+  string token = 1;
+}
+
+message VerifyTokenResponse {
+  string user_id = 1;
+  string email = 2;
+}

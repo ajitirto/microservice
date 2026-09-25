@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"gateway/internal/authresolver"
 	"gateway/internal/config"
 	"gateway/internal/server"
 )
@@ -31,7 +32,20 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
 	slog.SetDefault(logger)
 
-	h, err := server.New(cfg, logger)
+	verifier, err := authresolver.New(authresolver.Config{
+		Address:     cfg.AuthGRPCAddr,
+		Timeout:     500 * time.Millisecond,
+		MaxAttempts: 2,
+		BaseBackoff: 50 * time.Millisecond,
+		Logger:      logger,
+	})
+	if err != nil {
+		logger.Error("failed to create auth resolver", slog.Any("error", err))
+		os.Exit(1)
+	}
+	defer verifier.Close()
+
+	h, err := server.New(cfg, logger, verifier)
 	if err != nil {
 		logger.Error("failed to create server", slog.Any("error", err))
 		os.Exit(1)

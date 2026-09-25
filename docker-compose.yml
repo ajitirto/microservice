@@ -10,6 +10,7 @@ services:
       USER_SERVICE_URL: "${USER_SERVICE_URL:-http://user:8082}"
       POST_SERVICE_URL: "${POST_SERVICE_URL:-http://post:8083}"
       NOTIFICATION_SERVICE_URL: "${NOTIFICATION_SERVICE_URL:-http://notification:8084}"
+      AUTH_GRPC_ADDR: "${AUTH_GRPC_ADDR:-auth:9091}"
       GATEWAY_TIMEOUT: "${GATEWAY_TIMEOUT:-10s}"
       LOG_LEVEL: "${LOG_LEVEL:-info}"
     depends_on:
@@ -24,6 +25,7 @@ services:
     container_name: microservice-auth
     ports:
       - "${AUTH_PORT:-8081}:8081"
+      - "${AUTH_GRPC_PORT:-9091}:9091"
     environment:
       AUTH_SECRET: "${AUTH_SECRET:-dev-secret-change-me}"
       ACCESS_TOKEN_TTL: "${ACCESS_TOKEN_TTL:-15m}"

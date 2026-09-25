@@ -9,6 +9,7 @@ import (
 
 type Config struct {
 	Port            string
+	GRPCPort        string
 	Secret          string
 	AccessTokenTTL  time.Duration
 	RefreshTokenTTL time.Duration
@@ -18,6 +19,7 @@ type Config struct {
 func Load() *Config {
 	return &Config{
 		Port:            getEnv("AUTH_PORT", "8081"),
+		GRPCPort:        getEnv("AUTH_GRPC_PORT", "9091"),
 		Secret:          getEnv("AUTH_SECRET", "dev-secret-change-me"),
 		AccessTokenTTL:  getDuration("ACCESS_TOKEN_TTL", 15*time.Minute),
 		RefreshTokenTTL: getDuration("REFRESH_TOKEN_TTL", 24*time.Hour),

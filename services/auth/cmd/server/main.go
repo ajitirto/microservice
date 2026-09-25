@@ -4,15 +4,21 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"google.golang.org/grpc"
+
+	"auth/internal/authpb"
 	"auth/internal/config"
+	authgrpc "auth/internal/grpc"
 	"auth/internal/repository"
 	"auth/internal/server"
+	"auth/internal/service"
 )
 
 func main() {
@@ -21,6 +27,7 @@ func main() {
 	slog.SetDefault(logger)
 
 	repo := repository.NewInMemory()
+	svc := service.New(repo.Users, repo.Refresh, cfg.Secret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL)
 
 	srv, err := server.New(cfg, logger, repo)
 	if err != nil {
@@ -28,13 +35,27 @@ func main() {
 		os.Exit(1)
 	}
 
+	grpcListener, err := net.Listen("tcp", ":"+cfg.GRPCPort)
+	if err != nil {
+		logger.Error("failed to listen for gRPC", "error", err, "port", cfg.GRPCPort)
+		os.Exit(1)
+	}
+	grpcServer := grpc.NewServer()
+	authpb.RegisterAuthServiceServer(grpcServer, authgrpc.NewServer(svc, logger))
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	errCh := make(chan error, 1)
+	errCh := make(chan error, 2)
 	go func() {
 		logger.Info("auth service listening", "addr", srv.Addr)
 		errCh <- srv.ListenAndServe()
+	}()
+	go func() {
+		logger.Info("auth gRPC service listening", "addr", grpcListener.Addr().String())
+		if err := grpcServer.Serve(grpcListener); err != nil {
+			errCh <- err
+		}
 	}()
 
 	select {
@@ -45,6 +66,7 @@ func main() {
 		}
 	case <-ctx.Done():
 		logger.Info("shutdown signal received, draining connections")
+		grpcServer.GracefulStop()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := srv.Shutdown(shutdownCtx); err != nil {

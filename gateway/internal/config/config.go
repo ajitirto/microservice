@@ -12,6 +12,7 @@ type Config struct {
 	UserServiceURL         string
 	PostServiceURL         string
 	NotificationServiceURL string
+	AuthGRPCAddr           string
 	LogLevel               string
 }
 
@@ -23,6 +24,7 @@ func Load() *Config {
 		UserServiceURL:         getEnv("USER_SERVICE_URL", "http://user:8082"),
 		PostServiceURL:         getEnv("POST_SERVICE_URL", "http://post:8083"),
 		NotificationServiceURL: getEnv("NOTIFICATION_SERVICE_URL", "http://notification:8084"),
+		AuthGRPCAddr:           getEnv("AUTH_GRPC_ADDR", "auth:9091"),
 		LogLevel:               getEnv("LOG_LEVEL", "info"),
 	}
 }

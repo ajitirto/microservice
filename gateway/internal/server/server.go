@@ -11,7 +11,7 @@ import (
 	"gateway/internal/proxy"
 )
 
-func New(cfg *config.Config, logger *slog.Logger) (http.Handler, error) {
+func New(cfg *config.Config, logger *slog.Logger, verifier middleware.TokenVerifier) (http.Handler, error) {
 	p, err := proxy.New(
 		cfg.AuthServiceURL,
 		cfg.UserServiceURL,
@@ -36,12 +36,12 @@ func New(cfg *config.Config, logger *slog.Logger) (http.Handler, error) {
 		})
 	})
 
-	// Middleware chain: recovery -> requestID -> logging -> timeout -> router
+	// Middleware chain: recovery -> requestID -> logging -> timeout -> auth -> router
 	var h http.Handler = mux
+	h = middleware.Auth(verifier)(h)
 	h = middleware.Timeout(cfg.Timeout)(h)
 	h = middleware.Logging(logger)(h)
 	h = middleware.RequestID(h)
-	// Seam for Auth middleware: h = middleware.Auth(h)
 	h = middleware.Recovery(logger)(h)
 
 	return h, nil
